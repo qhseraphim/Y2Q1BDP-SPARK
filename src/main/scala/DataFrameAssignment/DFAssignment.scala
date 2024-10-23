@@ -225,16 +225,16 @@ object DFAssignment {
     val explodingParents = commits
       .select(explode(col("parents.sha")).as("parent_sha"))
 
-    explodingParents.show(numRows = 999 )
+//    explodingParents.show(numRows = 999 )
 
     val validShas = explodingParents
       .join(commits, explodingParents("parent_sha") === commits("sha"), "inner")
       .select("parent_sha").groupBy("parent_sha")
       .agg(count("*").as("times_parent")).filter(col("times_parent") >= 2)
-    validShas.show(numRows = 999)
+//    validShas.show(numRows = 999)
 
     val result = validShas.withColumnRenamed("parent_sha", "sha")
-    result.show(numRows = 999)
+//    result.show(numRows = 999)
     result
   }
 
