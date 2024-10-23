@@ -3,6 +3,8 @@ package DataFrameAssignment
 import java.sql.Timestamp
 
 import org.apache.spark.sql.DataFrame
+import org.apache.spark.sql.expressions.Window
+import org.apache.spark.sql.functions._
 
 /**
   * Please read the comments carefully, as they describe the expected result and may contain hints in how
@@ -30,7 +32,15 @@ object DFAssignment {
     *                SHA's.
     * @return DataFrame of commits from the requested authors, including the commit SHA and the according timestamp.
     */
-  def assignment_12(commits: DataFrame, authors: Seq[String]): DataFrame = ???
+  def assignment_12(commits: DataFrame, authors: Seq[String]): DataFrame = {
+    val result = commits.where(col("commit.committer.name").isin(authors:_*)).selectExpr(
+      "commit.committer.name as committer",
+      "sha as sha",
+      "commit.committer.date as timestamp"
+    ).orderBy("timestamp")
+
+    result
+  }
 
   /**
     * In order to generate weekly dashboards for all projects, we need the data to be partitioned by weeks. As projects
@@ -48,7 +58,18 @@ object DFAssignment {
     * @return DataFrame containing 4 columns: repository name, week number, year and the number of commits for that
     *         week.
     */
-  def assignment_13(commits: DataFrame): DataFrame = ???
+  def assignment_13(commits: DataFrame): DataFrame = {
+    val regexButAsAString = """.*/repos/[^/]+/([^/]+)/.*"""
+    val result = commits.select(
+        regexp_extract(col("url"), regexButAsAString, 1).as("repository")
+        , weekofyear(to_date(col("commit.committer.date"))).as("week")
+        , year(to_date(col("commit.committer.date"))).as("year")
+    )
+    .groupBy(col("repository"), col("week"), col("year"))
+      .agg(count("*").as("count"))
+
+    result
+  }
 
   /**
     * A developer is interested in the age of commits in seconds. Although this is something that can always be
@@ -68,7 +89,14 @@ object DFAssignment {
     * @param commits Commit DataFrame, created from the data_raw.json file.
     * @return the input DataFrame with the appended `age` column.
     */
-  def assignment_14(commits: DataFrame, snapShotTimestamp: Timestamp): DataFrame = ???
+  def assignment_14(commits: DataFrame, snapShotTimestamp: Timestamp): DataFrame = {
+    val getColumnedXDDDDD= lit(snapShotTimestamp)
+    val result = commits.withColumn(
+      "age",
+      (unix_timestamp(getColumnedXDDDDD) - unix_timestamp(to_timestamp(col("commit.committer.date"))))
+    )
+    result
+  }
 
   /**
     * To perform the analysis on commit behavior, the intermediate time of commits is needed. We require that the DataFrame
@@ -93,7 +121,30 @@ object DFAssignment {
     * @param authorName Name of the author for which the result must be generated.
     * @return DataFrame with an appended column expressing the number of days since last commit, for the given user.
     */
-  def assignment_15(commits: DataFrame, authorName: String): DataFrame = ???
+  def assignment_15(commits: DataFrame, authorName: String): DataFrame = {
+    val authorResults = commits.filter(col("commit.committer.name") === (authorName))
+//    authorResults.show
+
+    val timeStamped = authorResults.withColumn("date_timestamp", to_timestamp(col("commit.committer.date")))
+//    timeStamped.show
+
+    val chronologicalResults = timeStamped.orderBy("date_timestamp")
+//    chronologicalResults.show
+
+    val windowSpec = Window
+//      .partitionBy("commit.committer.name") // dont partition
+      .orderBy("date_timestamp")
+    val laggy = chronologicalResults.withColumn("prev_date", lag(col("date_timestamp"), offset=1).over(windowSpec))
+//    laggy.show
+
+    val result =laggy.withColumn("time_diff", when(col("prev_date").isNull, 0)
+        .otherwise(datediff(col("date_timestamp"), col("prev_date"))))
+      .drop("date_timestamp", "prev_date")
+      .orderBy(col("commit.committer.date"))
+//    result.show
+
+    result
+  }
 
   /**
     * To get a bit of insight into the spark SQL and its aggregation functions, you will have to implement a function
@@ -112,7 +163,18 @@ object DFAssignment {
     * @return DataFrame containing a `day` column and a `commits_per_day` column representing the total number of
     *         commits that have been made on that week day.
     */
-  def assignment_16(commits: DataFrame): DataFrame = ???
+  def assignment_16(commits: DataFrame): DataFrame = {
+    val dayStamped: DataFrame  = commits.withColumn("day", dayofweek(to_date(col("commit.committer.date"))))
+//    dayStamped.show()
+    val windowSpec = Window.partitionBy("day")
+    val dayCount: DataFrame = dayStamped.withColumn("commits_per_day", count("*").over(windowSpec))
+//    dayCount.show
+    val projectionButTheyCallItSelectIDK = dayCount.select("day", "commits_per_day")
+//    projectionButTheyCallItSelectIDK.show()
+    val result = projectionButTheyCallItSelectIDK.distinct()
+//    result.show
+    result
+  }
 
   /**
     * Commits can be uploaded on different days. We want to get insight into the difference in commit time of the author and
@@ -132,7 +194,12 @@ object DFAssignment {
     * @return the original DataFrame with an appended column `commit_time_diff`, containing the time difference
     *         (in number of seconds) between authorizing and committing.
     */
-  def assignment_17(commits: DataFrame): DataFrame = ???
+  def assignment_17(commits: DataFrame): DataFrame = {
+    val result = commits.withColumn("commit_time_diff", unix_timestamp(to_timestamp(col("commit.committer.date"))) - unix_timestamp(to_timestamp(col("commit.author.date"))))
+//    result.show
+    result
+    //unix_timestamp
+  }
 
   /**
     * Using DataFrames, find all the commit SHA's from which a branch has been created, including the number of
@@ -153,7 +220,23 @@ object DFAssignment {
     * @return DataFrame containing the commit SHAs from which at least one new branch has been created, and the actual
     *         number of created branches
     */
-  def assignment_18(commits: DataFrame): DataFrame = ???
+  def assignment_18(commits: DataFrame): DataFrame = {
+    // Extract parent SHAs from the 'parents' array and explode it into individual rows
+    val explodingParents = commits
+      .select(explode(col("parents.sha")).as("parent_sha"))
+
+    explodingParents.show(numRows = 999 )
+
+    val validShas = explodingParents
+      .join(commits, explodingParents("parent_sha") === commits("sha"), "inner")
+      .select("parent_sha").groupBy("parent_sha")
+      .agg(count("*").as("times_parent")).filter(col("times_parent") >= 2)
+    validShas.show(numRows = 999)
+
+    val result = validShas.withColumnRenamed("parent_sha", "sha")
+    result.show(numRows = 999)
+    result
+  }
 
   /**
     * In the given commit DataFrame, find all commits from which a fork has been created. We are interested in the names
@@ -177,5 +260,49 @@ object DFAssignment {
     * @return DataFrame containing the parent and child repository names, the SHA of the commit from which a new fork
     *         has been created and the SHA of the first commit in the fork repository
     */
-  def assignment_19(commits: DataFrame): DataFrame = ???
+  def assignment_19(commits: DataFrame): DataFrame = {
+    val regexButAsAString = """.*/repos/([^/]+/[^/]+)/.*"""
+    val commitsWithRepoNames = commits
+      .withColumn("repo_name", regexp_extract(col("url"), regexButAsAString, 1))
+//    println("commits but with repo name")
+//    commitsWithRepoNames.show()
+
+
+    val parentCommits = commitsWithRepoNames
+      .select(
+        col("repo_name").as("am_parent_repo_name"),
+        col("sha").as("am_parent_sha")
+      )
+//    println("parent pov")
+//    parentCommits.show()
+
+    val childCommits = commitsWithRepoNames
+      .select(
+        col("repo_name").as("am_child_repo_name"),
+        col("sha").as("am_child_sha"),
+        explode(col("parents")).as("am_child_parent_commit") // Explode the parents array
+      )
+//    println("child pov")
+//    childCommits.show()
+
+    val related = childCommits
+      .join(parentCommits, childCommits("am_child_parent_commit.sha") === parentCommits("am_parent_sha"))
+//    println("related commits joined into one")
+//    related.show()
+
+    /// we only want forks not branches
+    val noBranches = related
+      .filter(col("am_parent_repo_name") =!= col("am_child_repo_name"))
+//    noBranches.show()
+
+    val result = noBranches
+      .select(
+        col("am_parent_repo_name").as("parent_repo_name"),
+        col("am_child_repo_name").as("child_repo_name"),
+        col("am_parent_sha").as("parent_sha"),
+        col("am_child_sha").as("child_sha")
+      )
+//    result.show
+    result
+  }
 }
